@@ -1,4 +1,4 @@
-name: Compile Kernel
+name: Compile Kernel (Vio 2)
 
 on:
   workflow_dispatch:
