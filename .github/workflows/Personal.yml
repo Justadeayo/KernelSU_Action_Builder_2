@@ -1,0 +1,102 @@
+name: Compile Kernel (Source Script)
+
+on:
+  workflow_dispatch:
+    inputs:
+      kernel_source:
+        description: Kernel Source Repo URL
+        required: true
+        type: string
+
+      kernel_branch:
+        description: Kernel Branch
+        required: true
+        type: string
+
+      defconfig_name:
+        description: Defconfig Name
+        required: true
+        type: string
+
+      device_codename:
+        description: Device Codename (e.g. marble, alioth, vayu)
+        required: true
+        type: string
+
+      ksu_type:
+        description: "KernelSU Version"
+        required: true
+        type: choice
+        options:
+          - None
+          - KernelSU-by-xx
+          - ReSukiSU-with-susfs
+
+jobs:
+  Kernel_CI:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup SWAP
+        uses: pierotofy/set-swap-space@master
+        with:
+          swap-size-gb: 16
+
+      - name: Install build dependencies
+        run: |
+          sudo apt update
+          sudo apt install -y \
+          bc bison flex \
+          libssl-dev \
+          libelf-dev \
+          libdw-dev \
+          build-essential \
+          lz4 \
+          git \
+          python3 \
+          curl \
+          dwarves \
+          cpio \
+          gcc-aarch64-linux-gnu
+
+      - name: Clone Kernel Source
+        run: |
+          git clone --depth=1 -b ${{ inputs.kernel_branch }} ${{ inputs.kernel_source }} kernel
+
+      - name: Patch Kernel (KSU & SUSFS)
+        run: |
+          cd kernel
+          case "${{ inputs.ksu_type }}" in
+            "KernelSU-by-xx")
+              curl -LSs "https://raw.githubusercontent.com/backslashxx/KernelSU/refs/heads/master/kernel/setup.sh" | bash -s master
+              ;;
+            "ReSukiSU-with-susfs")
+              curl -LSs "https://raw.githubusercontent.com/ReSukiSU/ReSukiSU/main/kernel/setup.sh" | bash -s main
+              ;;
+          esac
+          
+          if [[ "${{ inputs.ksu_type }}" == *susfs ]]; then
+            curl -Lo susfs.patch https://raw.githubusercontent.com/JackA1ltman/NonGKI_Kernel_Build_2nd/refs/heads/mainline/Patches/Patch/susfs_patch_to_4.14.patch
+            curl -Lo inline.sh https://raw.githubusercontent.com/JackA1ltman/NonGKI_Kernel_Build_2nd/refs/heads/mainline/Patches/susfs_inline_hook_patches.sh
+            patch -p1 < susfs.patch
+            bash inline.sh
+            
+            # Apply configs to defconfig before script runs
+            echo "CONFIG_KSU=y" >> arch/arm64/configs/${{ inputs.defconfig_name }}
+            echo "CONFIG_KSU_SUSFS=y" >> arch/arm64/configs/${{ inputs.defconfig_name }}
+          fi
+          
+          if [[ "${{ inputs.ksu_type }}" == "KernelSU-by-xx" ]]; then
+            echo "CONFIG_KSU_TAMPER_SYSCALL_TABLE=y" >> arch/arm64/configs/${{ inputs.defconfig_name }}
+          fi
+
+      - name: Run Compilation Script
+        run: |
+          cd kernel
+          chmod +x compile.sh
+          ./compile.sh
+          
