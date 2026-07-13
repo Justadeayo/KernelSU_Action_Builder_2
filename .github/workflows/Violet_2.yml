@@ -177,12 +177,12 @@ jobs:
           git clone -b master https://github.com/Justadeayo/AnyKernel3.git
           
           # Priority logic for Kernel Image matching device layout
-          if [ -f $BOOT_DIR/Image.gz-dtb ]; then
-              echo "Found Image.gz-dtb, using it."
-              cp $BOOT_DIR/Image.gz-dtb AnyKernel3/Image.gz-dtb
-          elif [ -f $BOOT_DIR/Image.gz ]; then
-              echo "Image.gz-dtb not found, using Image.gz."
+          if [ -f $BOOT_DIR/Image.gz ]; then
+              echo "Found Image.gz, prioritizing and copying it."
               cp $BOOT_DIR/Image.gz AnyKernel3/Image.gz
+          elif [ -f $BOOT_DIR/Image.gz-dtb ]; then
+              echo "Image.gz not found, falling back to Image.gz-dtb."
+              cp $BOOT_DIR/Image.gz-dtb AnyKernel3/Image.gz-dtb
           fi
 
           # Kernel script expects DTB copied specifically as "dtb" inside AnyKernel3
