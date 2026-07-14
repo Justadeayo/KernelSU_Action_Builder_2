@@ -46,7 +46,7 @@ on:
         type: choice
         options:
           - None
-          - KernelSU-by-xx
+          - KernelSU-Next
           - ReSukiSU-with-susfs
 
 jobs:
@@ -126,7 +126,7 @@ jobs:
           
           # Initialize KernelSU setup scripts based on selection
           case "${{ inputs.ksu_type }}" in
-            "KernelSU-by-xx")
+            "KernelSU-Next")
               curl -LSs "https://raw.githubusercontent.com/Justadeayo/KernelSU-Next/refs/heads/legacy/kernel/setup.sh" | bash -s legacy
               ;;
             "ReSukiSU-with-susfs")
