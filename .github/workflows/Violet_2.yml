@@ -1,4 +1,4 @@
-Name: Compile Kernel (Vio 2)
+name: Compile Kernel (Vio 2)
 
 on:
   workflow_dispatch:
@@ -8,6 +8,7 @@ on:
         required: true
         type: choice
         options:
+          - clang-r530567
           - clang-3289846
           - clang-r450784e
           - clang-r475365b
@@ -34,6 +35,89 @@ on:
         description: Defconfig Name
         required: true
         type: string
+
+      device_codename:
+        description: Device Codename (e.g. violet)
+        required: true
+        type: string
+
+      ksu_type:
+        description: "KernelSU Version"
+        required: false
+        type: choice
+        options:
+          - None
+          - KernelSU-by-xx
+          - ReSukiSU-with-susfs
+
+jobs:
+  Kernel_CI:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # Required for GitHub Releases
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup SWAP
+        uses: pierotofy/set-swap-space@master
+        with:
+          swap-size-gb: 16
+
+      - name: Install build dependencies
+        run: |
+          sudo apt update && sudo apt install -y bc bison flex libssl-dev libelf-dev libdw-dev build-essential lz4 git python3 curl dwarves cpio lld gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi
+          
+      - name: Clone Kernel Source
+        run: git clone --depth=1 -b ${{ inputs.kernel_branch }} ${{ inputs.kernel_source }} kernel
+
+      - name: Download Toolchain
+        run: |
+          mkdir -p toolchains
+          if [[ "${{ inputs.clang_version }}" == "clang-r530567" ]]; then
+            git clone --depth=1 https://github.com/itsshashanksp/android_prebuilts_clang_host_linux-x86_clang-r530567.git toolchains/clang-r530567
+          else
+            mkdir -p toolchains/${{ inputs.clang_version }}
+            curl -LO https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/android16-qpr2-release/${{ inputs.clang_version }}.tar.gz
+            tar -xf "${{ inputs.clang_version }}.tar.gz" -C toolchains/${{ inputs.clang_version }}
+          fi
+
+      - name: Compile Kernel
+        run: |
+          export PATH="${GITHUB_WORKSPACE}/toolchains/${{ inputs.clang_version }}/bin:$PATH"
+          export ARCH=arm64 && export SUBARCH=arm64 && export LLVM=1 && export LLVM_IAS=1
+          export CC=clang && export CXX=clang++ && export LD=ld.lld
+          export CROSS_COMPILE=aarch64-linux-gnu- && export CROSS_COMPILE_ARM32=arm-linux-gnueabi-
+          cd kernel
+          
+          # Patching Logic
+          if [[ "${{ inputs.ksu_type }}" == "KernelSU-by-xx" ]]; then
+            curl -LSs "https://raw.githubusercontent.com/backslashxx/KernelSU/refs/heads/master/kernel/setup.sh" | bash -s master
+            echo "CONFIG_KPROBES=n" >> arch/arm64/configs/${{ inputs.defconfig_name }}
+          elif [[ "${{ inputs.ksu_type }}" == "ReSukiSU-with-susfs" ]]; then
+            curl -LSs "https://raw.githubusercontent.com/ReSukiSU/ReSukiSU/main/kernel/setup.sh" | bash -s main
+            curl -Lo susfs.patch https://raw.githubusercontent.com/JackA1ltman/NonGKI_Kernel_Build_2nd/refs/heads/mainline/Patches/Patch/susfs_patch_to_4.14.patch
+            patch -p1 < susfs.patch
+            echo "CONFIG_KSU_SUSFS=y" >> arch/arm64/configs/${{ inputs.defconfig_name }}
+          fi
+          
+          make O=out ${{ inputs.defconfig_name }}
+          make -j$(nproc) O=out 
+
+      - name: Create Flashable Zip
+        run: |
+          git clone -b master https://github.com/Justadeayo/AnyKernel3.git
+          cp kernel/out/arch/arm64/boot/Image* AnyKernel3/
+          [ -f kernel/out/arch/arm64/boot/dtb ] && cp kernel/out/arch/arm64/boot/dtb AnyKernel3/
+          cd AnyKernel3
+          sed -i "s/device.name1=.*/device.name1=${{ inputs.device_codename }}/" anykernel.sh
+          zip -r9 ../kernel_build.zip * -x .git
+
+      - name: Create Release
+        run: |
+          TAG="build_$(date +%Y%m%d_%H%M)"
+          gh release create "$TAG" --title "$TAG" --notes "Kernel build for ${{ inputs.device_codename }}" kernel_build.zip
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       device_codename:
         description: Device Codename (e.g. marble, alioth, vayu)
