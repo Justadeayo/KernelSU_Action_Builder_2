@@ -50,8 +50,8 @@ on:
           - KernelSU-by-xx
           - ReSukiSU-with-susfs
 
-      BUILD-COMMIT:
-         description: "Any new changes that applies"
+      BUILD_COMMIT:
+         description: "Any new changes that applies as a build note/commit"
          required: true
          type: string
           
@@ -124,7 +124,8 @@ jobs:
           TG_MSG+="*SUSFS*: \`${SUSFS_LABEL}\`%0A"
           TG_MSG+="*Build Date*: \`$(date +'%Y-%m-%d %H:%M')\`%0A"
           TG_MSG+="*KSU Commit*: \`${LAST_KSU_COMMIT}\`%0A"
-          TG_MSG+="*KSU Hash*: \`${COMMIT_HASH}\`"
+          TG_MSG+="*KSU Hash*: \`${COMMIT_HASH}\`%0A"
+          TG_MSG+="*Build Notes*: \`${BUILD_COMMIT}\`"
 
           curl -sX POST "https://api.telegram.org/bot${{ inputs.telegram_bot_token }}/sendMessage" \
             -d "chat_id=${{ inputs.telegram_chat_id }}" \
