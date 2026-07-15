@@ -127,7 +127,7 @@ jobs:
           # Initialize KernelSU setup scripts based on selection
           case "${{ inputs.ksu_type }}" in
             "KernelSU-by-xx")
-              curl -LSs "https://raw.githubusercontent.com/backslashxx/KernelSU/refs/heads/master/kernel/setup.sh" | bash -s master
+              curl -LSs "https://raw.githubusercontent.com/Justadeayo/KernelSU/refs/heads/master/kernel/setup.sh" | bash -s master
               ;;
             "ReSukiSU-with-susfs")
               curl -LSs "https://raw.githubusercontent.com/ReSukiSU/ReSukiSU/main/kernel/setup.sh" | bash -s main
