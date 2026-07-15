@@ -112,9 +112,10 @@ jobs:
 
       - name: Send Build Start Message
         run: |
-          TG_MSG="*=========================*%0A"
-          TG_MSG+="* J  U  S  T  U  S    *%0A"
-          TG_MSG+="* K E R N E L      *%0A"
+          # Use a clean single block for the message
+          TG_MSG="*========================*%0A"
+          TG_MSG+="*   J  U  S  T  U  S    *%0A"
+          TG_MSG+="*   K  E  R  N  E  L    *%0A"
           TG_MSG+="*========================*%0A"
           TG_MSG+="*Compiler*: \`${{ inputs.clang_version }}\`%0A"
           TG_MSG+="*Linux Version*: \`${KERNEL_VER}\`%0A"
@@ -122,14 +123,17 @@ jobs:
           TG_MSG+="*KernelSU*: \`${{ inputs.ksu_type }}\`%0A"
           TG_MSG+="*SUSFS*: \`${SUSFS_LABEL}\`%0A"
           TG_MSG+="*Build Date*: \`$(date +'%Y-%m-%d %H:%M')\`%0A"
-          TG_MSG+="*Build Commit*: \ `${BUILD_COMMIT}\`%0A"
           TG_MSG+="*KSU Commit*: \`${LAST_KSU_COMMIT}\`%0A"
           TG_MSG+="*KSU Hash*: \`${COMMIT_HASH}\`"
+
           curl -sX POST "https://api.telegram.org/bot${{ inputs.telegram_bot_token }}/sendMessage" \
             -d "chat_id=${{ inputs.telegram_chat_id }}" \
             -d "parse_mode=Markdown" \
             -d "disable_web_page_preview=true" \
             -d "text=${TG_MSG}"
+
+        
+        
 
       - name: Download AOSP Clang
         run: |
