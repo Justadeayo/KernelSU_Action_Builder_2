@@ -200,6 +200,10 @@ jobs:
       - name: Upload to Telegram
         run: |
           ZIP_FILE=$(ls *.zip)
-          SUCCESS_MSG="*Build Successful!* ✅%0A*Device*: \`${{ inputs.device_codename }}\`%0A*KernelSU*: \`${{ inputs.ksu_type }}\`%0A*SUSFS*: \`${SUSFS_LABEL}\`%0A*Date*: \`$(date -u +'%Y-%m-%d %H:%M UTC')\`"
+          SUCCESS_MSG="*Build Successful!* ✅%0A 
+          *Device*: \`${{ inputs.device_codename }}\`%0A 
+          *KernelSU*: \`${{ inputs.ksu_type }}\`%0A 
+          *SUSFS*: Yes by Default`%0A 
+          *Date*: \`$(date -u +'%Y-%m-%d %H:%M UTC')\`"
           curl -sX POST -F document=@"${ZIP_FILE}" "https://api.telegram.org/bot${{ inputs.telegram_bot_token }}/sendDocument" -F "chat_id=${{ inputs.telegram_chat_id }}" -F "parse_mode=Markdown" -F "caption=${SUCCESS_MSG}"
           
