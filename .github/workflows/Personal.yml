@@ -230,16 +230,20 @@ jobs:
           
           ZIP_FILE=$(ls *.zip)
           
-          # Use a single continuous string to avoid syntax errors
-          SUCCESS_MSG="*Build Successful!* ✅%0A"
-          SUCCESS_MSG+="%0A*Device*: \`${{ inputs.device_codename }}\`"
-          SUCCESS_MSG+="%0A*KernelSU*: \`${{ inputs.ksu_type }}\`"
-          SUCCESS_MSG+="%0A*SUSFS*: Yes by Default"
-          SUCCESS_MSG+="%0A*Duration*: \`${MINS}m ${SECS}s\`"
-          SUCCESS_MSG+="%0A*Date*: \`$(date -u +'%Y-%m-%d %H:%M UTC')\`"
+          # Define the message with actual newlines
+          # The backslash '\' at the end of the line allows the string to continue on the next
+          SUCCESS_MSG="*Build Successful!* ✅
 
+           *Device*: \`${{ inputs.device_codename }}\`
+           *KernelSU*: \`${{ inputs.ksu_type }}\`
+           *SUSFS*: Yes by Default
+           *Duration*: \`${MINS}m ${SECS}s\`
+           *Date*: \`$(date -u +'%Y-%m-%d %H:%M UTC')\`"
+
+          # Send via curl
           curl -sX POST -F document=@"${ZIP_FILE}" \
             "https://api.telegram.org/bot${{ inputs.telegram_bot_token }}/sendDocument" \
             -F "chat_id=${{ inputs.telegram_chat_id }}" \
             -F "parse_mode=Markdown" \
             -F "caption=${SUCCESS_MSG}"
+
