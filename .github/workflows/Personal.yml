@@ -1,4 +1,4 @@
-name: Compile Kernel (Vio 2)
+name: VIOLET BUILD
 
 on:
   workflow_dispatch:
@@ -19,27 +19,22 @@ on:
           - clang-r563880c
           - clang-r574158
           - clang-stable
-
       kernel_source:
         description: Kernel Source Repo URL
         required: true
         type: string
-
       kernel_branch:
         description: Kernel Branch
         required: true
         type: string
-
       defconfig_name:
         description: Defconfig Name
         required: true
         type: string
-
       device_codename:
         description: Device Codename (e.g. marble, alioth, vayu)
         required: true
         type: string
-
       ksu_type:
         description: "KernelSU Version"
         required: false
@@ -48,12 +43,10 @@ on:
           - None
           - KernelSU-by-xx
           - ReSukiSU-with-susfs
-
       telegram_chat_id:
         description: "Telegram Chat ID (e.g. -1001234567890)"
         required: true
         type: string
-
       telegram_bot_token:
         description: "Telegram Bot Token (e.g. 123456:ABC-DEF...)"
         required: true
@@ -81,24 +74,31 @@ jobs:
         run: |
           sudo apt update
           sudo apt install -y bc bison flex libssl-dev libelf-dev libdw-dev build-essential lz4 git python3 curl dwarves cpio lld gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi
-          
+
       - name: Clone Kernel Source
         run: |
           git clone --depth=1 -b ${{ inputs.kernel_branch }} ${{ inputs.kernel_source }} kernel
 
       - name: Prepare Metadata
         run: |
-          cd kernel
-          echo "KERNEL_VER=$(make kernelversion)" >> $GITHUB_ENV
+          # Metadata from Kernel Source
+          echo "KERNEL_VER=$(cd kernel && make kernelversion)" >> $GITHUB_ENV
+          
+          # Metadata from KernelSU Repo
+          git clone --depth=1 https://github.com/Justadeayo/KernelSU.git KSU_REPO
+          cd KSU_REPO
           echo "LAST_COMMIT=$(git log -1 --pretty=%s)" >> $GITHUB_ENV
           echo "COMMIT_HASH=$(git rev-parse --short HEAD)" >> $GITHUB_ENV
+          cd ..
+          
+          # Logic for SUSFS label
           echo "SUSFS_LABEL=$([[ "${{ inputs.ksu_type }}" == *"susfs"* ]] && echo "Yes" || echo "No")" >> $GITHUB_ENV
 
       - name: Send Build Start Message
         run: |
           TG_MSG="*=========================*%0A"
-          TG_MSG+="*    J  U  S  T  U  S    *%0A"
-          TG_MSG+="*       K E R N E L      *%0A"
+          TG_MSG+="* J  U  S  T  U  S    *%0A"
+          TG_MSG+="* K E R N E L      *%0A"
           TG_MSG+="*========================*%0A"
           TG_MSG+="*Compiler*: \`${{ inputs.clang_version }}\`%0A"
           TG_MSG+="*Linux Version*: \`${KERNEL_VER}\`%0A"
@@ -106,14 +106,14 @@ jobs:
           TG_MSG+="*KernelSU*: \`${{ inputs.ksu_type }}\`%0A"
           TG_MSG+="*SUSFS*: \`${SUSFS_LABEL}\`%0A"
           TG_MSG+="*Build Date*: \`$(date +'%Y-%m-%d %H:%M')\`%0A"
-          TG_MSG+="*Last Commit*: \`${LAST_COMMIT}\`%0A"
-          TG_MSG+="*Commit Hash*: \`${COMMIT_HASH}\`"
+          TG_MSG+="*KSU Commit*: \`${LAST_COMMIT}\`%0A"
+          TG_MSG+="*KSU Hash*: \`${COMMIT_HASH}\`"
           curl -sX POST "https://api.telegram.org/bot${{ inputs.telegram_bot_token }}/sendMessage" \
             -d "chat_id=${{ inputs.telegram_chat_id }}" \
             -d "parse_mode=Markdown" \
             -d "disable_web_page_preview=true" \
             -d "text=${TG_MSG}"
-            
+
       - name: Download AOSP Clang
         run: |
           mkdir -p toolchains/${{ inputs.clang_version }}
@@ -202,3 +202,4 @@ jobs:
           ZIP_FILE=$(ls *.zip)
           SUCCESS_MSG="*Build Successful!* ✅%0A*Device*: \`${{ inputs.device_codename }}\`%0A*KernelSU*: \`${{ inputs.ksu_type }}\`%0A*SUSFS*: \`${SUSFS_LABEL}\`%0A*Date*: \`$(date -u +'%Y-%m-%d %H:%M UTC')\`"
           curl -sX POST -F document=@"${ZIP_FILE}" "https://api.telegram.org/bot${{ inputs.telegram_bot_token }}/sendDocument" -F "chat_id=${{ inputs.telegram_chat_id }}" -F "parse_mode=Markdown" -F "caption=${SUCCESS_MSG}"
+          
