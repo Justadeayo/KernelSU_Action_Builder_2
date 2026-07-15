@@ -122,7 +122,7 @@ jobs:
           TG_MSG+="*Device*: \`${{ inputs.device_codename }}\`%0A"
           TG_MSG+="*KernelSU*: \`${{ inputs.ksu_type }}\`%0A"
           TG_MSG+="*SUSFS*: \`${SUSFS_LABEL}\`%0A"
-          TG_MSG+="*Build Date*: \`$(date +'%Y-%m-%d %H:%M')\`%0A"
+          "TG_MSG+="*Build Date*: \`$(date +'%Y-%m-%d %H:%M')\`%0A""
           TG_MSG+="*KSU Commit*: \`${LAST_KSU_COMMIT}\`%0A"
           TG_MSG+="*KSU Hash*: \`${COMMIT_HASH}\`"
 
