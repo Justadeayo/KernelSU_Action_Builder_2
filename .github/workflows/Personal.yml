@@ -105,6 +105,7 @@ jobs:
           cd KSU_REPO
           echo "LAST_KSU_COMMIT=$(git log -1 --pretty=%s)" >> $GITHUB_ENV
           echo "COMMIT_HASH=$(git rev-parse --short HEAD)" >> $GITHUB_ENV
+          echo "BUILD_COMMIT=${{ inputs.BUILD_COMMIT }}" >> $GITHUB_ENV
           cd ..
           
           # Logic for SUSFS label
