@@ -49,13 +49,11 @@ on:
           - KernelSU-by-xx
           - ReSukiSU-with-susfs
 
-           
-     telegram_chat_id:
+      telegram_chat_id:
         description: "Telegram Chat ID (e.g. -1001234567890)"
         required: true
         type: string
 
-        
       telegram_bot_token:
         description: "Telegram Bot Token (e.g. 123456:ABC-DEF...)"
         required: true
@@ -64,7 +62,7 @@ on:
 jobs:
   Kernel_CI:
     env:
-        GH_TOKEN: ${{ github.token }}
+      GH_TOKEN: ${{ github.token }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -82,38 +80,19 @@ jobs:
       - name: Install build dependencies
         run: |
           sudo apt update
-          sudo apt install -y \
-          bc bison flex \
-          libssl-dev \
-          libelf-dev \
-          libdw-dev \
-          build-essential \
-          lz4 \
-          git \
-          python3 \
-          curl \
-          dwarves \
-          cpio \
-          lld \
-          gcc-aarch64-linux-gnu \
-          gcc-arm-linux-gnueabi
+          sudo apt install -y bc bison flex libssl-dev libelf-dev libdw-dev build-essential lz4 git python3 curl dwarves cpio lld gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi
           
       - name: Clone Kernel Source
         run: |
           git clone --depth=1 -b ${{ inputs.kernel_branch }} ${{ inputs.kernel_source }} kernel
-      - name: Download AOSP Clang
+
+      - name: Prepare Metadata
         run: |
-          mkdir -p toolchains/${{ inputs.clang_version }}
-          cd toolchains
-          OLD_TAGS=("clang-r450784e" "clang-r475365b" "clang-r487747c" "clang-r498229b" "clang-r510928")
-          if [[ " ${OLD_TAGS[@]} " =~ " ${{ inputs.clang_version }} " ]]; then
-            echo "Downloading from android-14.0.0_r33"
-            curl -LO https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/tags/android-14.0.0_r33/${{ inputs.clang_version }}.tar.gz
-          else
-            echo "Downloading from android16-qpr2-release"
-            curl -LO https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/android16-qpr2-release/${{ inputs.clang_version }}.tar.gz
-          fi
-          tar -xf "${{ inputs.clang_version }}.tar.gz" -C ${{ inputs.clang_version }}
+          cd kernel
+          echo "KERNEL_VER=$(make kernelversion)" >> $GITHUB_ENV
+          echo "LAST_COMMIT=$(git log -1 --pretty=%s)" >> $GITHUB_ENV
+          echo "COMMIT_HASH=$(git rev-parse --short HEAD)" >> $GITHUB_ENV
+          echo "SUSFS_LABEL=$([[ "${{ inputs.ksu_type }}" == *"susfs"* ]] && echo "Yes" || echo "No")" >> $GITHUB_ENV
 
       - name: Send Build Start Message
         run: |
@@ -121,10 +100,10 @@ jobs:
           TG_MSG+="*    J  U  S  T  U  S    *%0A"
           TG_MSG+="*       K E R N E L      *%0A"
           TG_MSG+="*========================*%0A"
-          TG_MSG+="*Compiler*: \`${CLANG_VER}\`%0A"
+          TG_MSG+="*Compiler*: \`${{ inputs.clang_version }}\`%0A"
           TG_MSG+="*Linux Version*: \`${KERNEL_VER}\`%0A"
           TG_MSG+="*Device*: \`${{ inputs.device_codename }}\`%0A"
-          TG_MSG+="*KernelSU*: \`${{ inputs.ksu_variant }}\`%0A"
+          TG_MSG+="*KernelSU*: \`${{ inputs.ksu_type }}\`%0A"
           TG_MSG+="*SUSFS*: \`${SUSFS_LABEL}\`%0A"
           TG_MSG+="*Build Date*: \`$(date +'%Y-%m-%d %H:%M')\`%0A"
           TG_MSG+="*Last Commit*: \`${LAST_COMMIT}\`%0A"
@@ -135,6 +114,18 @@ jobs:
             -d "disable_web_page_preview=true" \
             -d "text=${TG_MSG}"
             
+      - name: Download AOSP Clang
+        run: |
+          mkdir -p toolchains/${{ inputs.clang_version }}
+          cd toolchains
+          OLD_TAGS=("clang-r450784e" "clang-r475365b" "clang-r487747c" "clang-r498229b" "clang-r510928")
+          if [[ " ${OLD_TAGS[@]} " =~ " ${{ inputs.clang_version }} " ]]; then
+            curl -LO https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/tags/android-14.0.0_r33/${{ inputs.clang_version }}.tar.gz
+          else
+            curl -LO https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/android16-qpr2-release/${{ inputs.clang_version }}.tar.gz
+          fi
+          tar -xf "${{ inputs.clang_version }}.tar.gz" -C ${{ inputs.clang_version }}
+
       - name: Compile Kernel
         run: |
           CLANG_ROOT="${GITHUB_WORKSPACE}/toolchains/${{ inputs.clang_version }}/bin"
@@ -156,8 +147,6 @@ jobs:
           export CROSS_COMPILE=aarch64-linux-gnu-
           export CROSS_COMPILE_ARM32=arm-linux-gnueabi-
           cd kernel
-          
-          # Initialize KernelSU setup scripts based on selection
           case "${{ inputs.ksu_type }}" in
             "KernelSU-by-xx")
               curl -LSs "https://raw.githubusercontent.com/Justadeayo/KernelSU/refs/heads/master/kernel/setup.sh" | bash -s master
@@ -167,8 +156,6 @@ jobs:
               ;;
           esac
           touch ./.scmversion
-          
-          # 1. Dynamically append all base KernelSU dependencies if any KSU option is selected
           if [[ "${{ inputs.ksu_type }}" != "None" ]]; then
             DEFCONFIG="arch/arm64/configs/${{ inputs.defconfig_name }}"
             echo "CONFIG_KSU=y" >> $DEFCONFIG
@@ -177,97 +164,41 @@ jobs:
             echo "CONFIG_KSU_KPROBE_HOOKS=y" >> $DEFCONFIG
             echo "CONFIG_OVERLAY_FS=y" >> $DEFCONFIG
           fi
-          
-          # 2. Download patches, run custom inline hook script, and configure SUSFS
-          if [[ "${{ inputs.ksu_type }}" == *susfs ]]; then
+          if [[ "${{ inputs.ksu_type }}" == *"susfs"* ]]; then
             curl -Lo susfs.patch https://raw.githubusercontent.com/JackA1ltman/NonGKI_Kernel_Build_2nd/refs/heads/mainline/Patches/Patch/susfs_patch_to_4.14.patch
             curl -Lo inline.sh https://raw.githubusercontent.com/JackA1ltman/NonGKI_Kernel_Build_2nd/refs/heads/mainline/Patches/susfs_inline_hook_patches.sh
             patch -p1 < susfs.patch
             bash inline.sh
-            
             echo "CONFIG_KSU_SUSFS=y" >> arch/arm64/configs/${{ inputs.defconfig_name }}
           fi
-          
-          # Generate base .config layout
           make O=out ${{ inputs.defconfig_name }}
-          
-          # 3. Handle additional config modifications for non-SUSFS standard KernelSU
           if [[ "${{ inputs.ksu_type }}" == "KernelSU-by-xx" ]]; then
             echo "CONFIG_KSU_TAMPER_SYSCALL_TABLE=y" >> out/.config
           fi
-          
-          # Build the kernel
           make -j$(nproc) O=out 
+
       - name: Make AnyKernel3
         run: |
           ZIP_NAME="${{ inputs.device_codename }}_${{ inputs.ksu_type }}_$(date -u +"%Y%m%d_%H%M")"
           BOOT_DIR="kernel/out/arch/arm64/boot"
-          
-          # Clone My AnyKernel3 repository directly to use working layout
           git clone -b master https://github.com/Justadeayo/AnyKernel3.git
-          
-          # Priority logic for Kernel Image matching device layout
-          if [ -f $BOOT_DIR/Image.gz ]; then
-              echo "Found Image.gz, prioritizing and copying it."
-              cp $BOOT_DIR/Image.gz AnyKernel3/Image.gz
-          elif [ -f $BOOT_DIR/Image.gz-dtb ]; then
-              echo "Image.gz not found, falling back to Image.gz-dtb."
-              cp $BOOT_DIR/Image.gz-dtb AnyKernel3/Image.gz-dtb
-          fi
-          # Kernel script expects DTB copied specifically as "dtb" inside AnyKernel3
-          if [ -f $BOOT_DIR/dtb.img ]; then
-              echo "Found dtb.img, copying as dtb."
-              cp $BOOT_DIR/dtb.img AnyKernel3/dtb
-          elif [ -f $BOOT_DIR/dtb ]; then
-              echo "Found dtb, copying to AnyKernel3."
-              cp $BOOT_DIR/dtb AnyKernel3/dtb
-          fi
-          # Copy DTBO if it exists
-          if [ -f $BOOT_DIR/dtbo.img ]; then
-              echo "dtbo.img found, adding to AnyKernel."
-              cp $BOOT_DIR/dtbo.img AnyKernel3/dtbo.img
-          fi
-          # Navigate and ensure parameters are correct for violet
+          if [ -f $BOOT_DIR/Image.gz ]; then cp $BOOT_DIR/Image.gz AnyKernel3/Image.gz
+          elif [ -f $BOOT_DIR/Image.gz-dtb ]; then cp $BOOT_DIR/Image.gz-dtb AnyKernel3/Image.gz-dtb; fi
+          if [ -f $BOOT_DIR/dtb.img ]; then cp $BOOT_DIR/dtb.img AnyKernel3/dtb
+          elif [ -f $BOOT_DIR/dtb ]; then cp $BOOT_DIR/dtb AnyKernel3/dtb; fi
+          if [ -f $BOOT_DIR/dtbo.img ]; then cp $BOOT_DIR/dtbo.img AnyKernel3/dtbo.img; fi
           cd AnyKernel3
           sed -i "s/device.name1=.*/device.name1=${{ inputs.device_codename }}/" anykernel.sh
-          
-          # Package the flashable zip
           zip -r9 ../"${ZIP_NAME}.zip" * -x .git
+
       - name: Create GitHub Release
         run: |
           REL_NAME="${{ inputs.device_codename }}_${{ inputs.ksu_type }}_$(date -u +"%Y%m%d_%H%M")"
-          cd ${GITHUB_WORKSPACE}
           ZIP_FILE=$(ls *.zip)
-          BOOT_DIR="kernel/out/arch/arm64/boot"
-          EXTRA_FILES=""
-          for img in Image Image.gz Image.gz-dtb; do
-            if [ -f "${BOOT_DIR}/${img}" ]; then
-              cp "${BOOT_DIR}/${img}" "${GITHUB_WORKSPACE}/${img}"
-              EXTRA_FILES="${EXTRA_FILES} ${img}"
-            fi
-          done
-          gh release create "$REL_NAME" --title "$REL_NAME" --notes "" "${ZIP_FILE}" ${EXTRA_FILES}
+          gh release create "$REL_NAME" --title "$REL_NAME" --notes "" "${ZIP_FILE}"
 
       - name: Upload to Telegram
         run: |
-          ZIP_FILE=$(ls ${GITHUB_WORKSPACE}/*.zip)
-          FILE_SIZE=$(du -sh "$ZIP_FILE" | cut -f1)
-
-          SUSFS_LABEL="No"
-          if [[ "${{ inputs.enable_susfs }}" == "true" || "${{ inputs.ksu_variant }}" == "KernelSU-Next" ]]; then
-            SUSFS_LABEL="Yes"
-          fi
-
-          SUCCESS_MSG="*Build Successful!* ✅
-          *Device*: \`${{ inputs.device_codename }}\`
-          *KernelSU*: \`${{ inputs.ksu_variant }}\`
-          *SUSFS*: \`${SUSFS_LABEL}\`
-          *File*: \`${ZIP_NAME}.zip\`
-          *Size*: \`${FILE_SIZE}\`
-          *Date*: \`$(date -u +'%Y-%m-%d %H:%M UTC')\`"
-
-          curl -sX POST -F document=@"${ZIP_FILE}" \
-            "https://api.telegram.org/bot${{ inputs.telegram_bot_token }}/sendDocument" \
-            -F "chat_id=${{ inputs.telegram_chat_id }}" \
-            -F "parse_mode=Markdown" \
-            -F "caption=${SUCCESS_MSG}"
+          ZIP_FILE=$(ls *.zip)
+          SUCCESS_MSG="*Build Successful!* ✅%0A*Device*: \`${{ inputs.device_codename }}\`%0A*KernelSU*: \`${{ inputs.ksu_type }}\`%0A*SUSFS*: \`${SUSFS_LABEL}\`%0A*Date*: \`$(date -u +'%Y-%m-%d %H:%M UTC')\`"
+          curl -sX POST -F document=@"${ZIP_FILE}" "https://api.telegram.org/bot${{ inputs.telegram_bot_token }}/sendDocument" -F "chat_id=${{ inputs.telegram_chat_id }}" -F "parse_mode=Markdown" -F "caption=${SUCCESS_MSG}"
