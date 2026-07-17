@@ -98,7 +98,7 @@ jobs:
         run: |
           cd kernel
           if [[ "${{ inputs.ksu_variant }}" == "KernelSU-Next" ]]; then
-            git clone -b legacy-susfs-v2 https://github.com/szyryjn911/KernelSU-Next.git KernelSU-Next
+            git clone -b legacy-susfs-v2 https://github.com/Justadeayo/KernelSU-Next.git KernelSU-Next
             bash KernelSU-Next/kernel/setup.sh legacy-susfs-v2
           else
             curl -LSs "https://raw.githubusercontent.com/skye-tachyon/KernelSU/master/kernel/setup.sh" | bash -s master
@@ -128,7 +128,7 @@ jobs:
             SUSFS_LABEL="Yes"
           fi
           TG_MSG="*=========================*%0A"
-          TG_MSG+="*    S H I N I G A M I   *%0A"
+          TG_MSG+="*       J.U.S.T.U.S.     *%0A"
           TG_MSG+="*       K E R N E L      *%0A"
           TG_MSG+="*========================*%0A"
           TG_MSG+="*Compiler*: \`${CLANG_VER}\`%0A"
@@ -199,7 +199,7 @@ jobs:
           if [[ "${{ inputs.enable_susfs }}" == "true" || "${{ inputs.ksu_variant }}" == "KernelSU-Next" ]]; then
             SUSFS_LABEL="SUSFS"
           fi
-          ZIP_NAME="SHINIGAMI-KERNEL-${{ inputs.device_codename }}-${SUSFS_LABEL}-$(date -u +"%Y%m%d_%H%M")"
+          ZIP_NAME="JUSTUS-KERNEL-${{ inputs.device_codename }}-${SUSFS_LABEL}-$(date -u +"%Y%m%d_%H%M")"
           BOOT_DIR="kernel/out/arch/arm64/boot"
           git clone -b master https://github.com/Justadeayo/AnyKernel3.git
 
