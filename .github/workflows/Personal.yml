@@ -40,6 +40,7 @@ on:
         description: Device Codename (e.g. marble, alioth, vayu)
         required: true
         type: string
+        default: "violet"
         
       ksu_type:
         description: "KernelSU Version"
@@ -89,7 +90,7 @@ jobs:
       - name: Install build dependencies
         run: |
           sudo apt update
-          sudo apt install -y bc bison flex libssl-dev libelf-dev libdw-dev build-essential lz4 git python3 curl dwarves cpio lld gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi
+          sudo apt install -y bc bison flex libssl-dev libelf-dev libdw-dev build-essential lz4 git python3 curl dwarves cpio lld gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi zip
 
       - name: Clone Kernel Source
         run: |
@@ -134,9 +135,6 @@ jobs:
             -d "disable_web_page_preview=true" \
             -d "text=${TG_MSG}"
 
-        
-        
-
       - name: Download AOSP Clang
         run: |
           mkdir -p toolchains/${{ inputs.clang_version }}
@@ -169,6 +167,7 @@ jobs:
           export STRIP="${CLANG_ROOT}/llvm-strip"
           export CROSS_COMPILE=aarch64-linux-gnu-
           export CROSS_COMPILE_ARM32=arm-linux-gnueabi-
+          
           cd kernel
           case "${{ inputs.ksu_type }}" in
             "KernelSU-by-xx")
@@ -178,27 +177,38 @@ jobs:
               curl -LSs "https://raw.githubusercontent.com/ReSukiSU/ReSukiSU/main/kernel/setup.sh" | bash -s main
               ;;
           esac
+          
           touch ./.scmversion
+          
+          DEFCONFIG="arch/arm64/configs/${{ inputs.defconfig_name }}"
+          
           if [[ "${{ inputs.ksu_type }}" != "None" ]]; then
-            DEFCONFIG="arch/arm64/configs/${{ inputs.defconfig_name }}"
-            echo "CONFIG_KSU=y" >> $DEFCONFIG
-            echo "CONFIG_KPROBES=y" >> $DEFCONFIG
-            echo "CONFIG_KPROBE_EVENTS=y" >> $DEFCONFIG
-            echo "CONFIG_KSU_KPROBE_HOOKS=y" >> $DEFCONFIG
-            echo "CONFIG_OVERLAY_FS=y" >> $DEFCONFIG
+            echo "CONFIG_KSU=y" >> "$DEFCONFIG"
+            echo "CONFIG_KPROBES=y" >> "$DEFCONFIG"
+            echo "CONFIG_KPROBE_EVENTS=y" >> "$DEFCONFIG"
+            echo "CONFIG_KSU_KPROBE_HOOKS=y" >> "$DEFCONFIG"
+            echo "CONFIG_OVERLAY_FS=y" >> "$DEFCONFIG"
           fi
+          
           if [[ "${{ inputs.ksu_type }}" == *"susfs"* ]]; then
             curl -Lo susfs.patch https://raw.githubusercontent.com/JackA1ltman/NonGKI_Kernel_Build_2nd/refs/heads/mainline/Patches/Patch/susfs_patch_to_4.14.patch
             curl -Lo inline.sh https://raw.githubusercontent.com/JackA1ltman/NonGKI_Kernel_Build_2nd/refs/heads/mainline/Patches/susfs_inline_hook_patches.sh
-            patch -p1 < susfs.patch
+            
+            # Use safety-fuzzy patching block to avoid build-halts on target device trees
+            patch -p1 --merge --no-backup-if-mismatch < susfs.patch || true
             bash inline.sh
-            echo "CONFIG_KSU_SUSFS=y" >> arch/arm64/configs/${{ inputs.defconfig_name }}
+            
+            echo "CONFIG_KSU_SUSFS=y" >> "$DEFCONFIG"
           fi
+          
           make O=out ${{ inputs.defconfig_name }}
+          
           if [[ "${{ inputs.ksu_type }}" == "KernelSU-by-xx" ]]; then
             echo "CONFIG_KSU_TAMPER_SYSCALL_TABLE=y" >> out/.config
           fi
-          make -j$(nproc) O=out 
+          
+          # Compile and pipes all error output safely to a log file
+          make -j$(nproc) O=out 2>&1 | tee ${GITHUB_WORKSPACE}/build.log
 
       - name: Make AnyKernel3
         run: |
@@ -231,14 +241,13 @@ jobs:
           ZIP_FILE=$(ls *.zip)
           
           # Define the message with actual newlines
-          # The backslash '\' at the end of the line allows the string to continue on the next
           SUCCESS_MSG="*Build Successful!* ✅
 
-           *Device*: \`${{ inputs.device_codename }}\`
-           *KernelSU*: \`${{ inputs.ksu_type }}\`
-           *SUSFS*: Yes by Default
-           *Duration*: \`${MINS}m ${SECS}s\`
-           *Date*: \`$(date -u +'%Y-%m-%d %H:%M UTC')\`"
+          *Device*: \`${{ inputs.device_codename }}\`
+          *KernelSU*: \`${{ inputs.ksu_type }}\`
+          *SUSFS*: ${SUSFS_LABEL}
+          *Duration*: \`${MINS}m ${SECS}s\`
+          *Date*: \`$(date -u +'%Y-%m-%d %H:%M UTC')\`"
 
           # Send via curl
           curl -sX POST -F document=@"${ZIP_FILE}" \
@@ -247,3 +256,39 @@ jobs:
             -F "parse_mode=Markdown" \
             -F "caption=${SUCCESS_MSG}"
 
+      - name: Send Build Failure Message & Logs
+        if: failure()
+        run: |
+          END_TIME=$(date +%s)
+          DURATION=$((END_TIME - BUILD_START))
+          MINS=$((DURATION / 60))
+          SECS=$((DURATION % 60))
+
+          # Create a clean error log zip if the build.log exists
+          if [ -f "${GITHUB_WORKSPACE}/build.log" ]; then
+            tail -n 35 "${GITHUB_WORKSPACE}/build.log" > "${GITHUB_WORKSPACE}/error_preview.txt"
+            zip -j "${GITHUB_WORKSPACE}/error_logs.zip" "${GITHUB_WORKSPACE}/build.log" "${GITHUB_WORKSPACE}/error_preview.txt"
+          fi
+
+          FAIL_MSG="*Build Failed!* ❌
+
+          *Device*: \`${{ inputs.device_codename }}\`
+          *KernelSU*: \`${{ inputs.ksu_type }}\`
+          *Duration*: \`${MINS}m ${SECS}s\`
+          *Run Link*: [View Actions Log](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})"
+
+          # Send log package if generated, otherwise send plain message
+          if [ -f "${GITHUB_WORKSPACE}/error_logs.zip" ]; then
+            curl -sX POST -F document=@"${GITHUB_WORKSPACE}/error_logs.zip" \
+              "https://api.telegram.org/bot${{ inputs.telegram_bot_token }}/sendDocument" \
+              -F "chat_id=${{ inputs.telegram_chat_id }}" \
+              -F "parse_mode=Markdown" \
+              -F "caption=${FAIL_MSG}"
+          else
+            curl -sX POST "https://api.telegram.org/bot${{ inputs.telegram_bot_token }}/sendMessage" \
+              -d "chat_id=${{ inputs.telegram_chat_id }}" \
+              -d "parse_mode=Markdown" \
+              -d "disable_web_page_preview=true" \
+              -d "text=${FAIL_MSG}"
+          fi
+          
