@@ -98,7 +98,7 @@ jobs:
         run: |
           cd kernel
           if [[ "${{ inputs.ksu_variant }}" == "KernelSU-Next" ]]; then
-            git clone -b legacy-susfs-v2 https://github.com/Justadeayo/KernelSU-Next.git KernelSU-Next
+            git clone -b legacy https://github.com/Justadeayo/KernelSU-Next.git KernelSU-Next
             bash KernelSU-Next/kernel/setup.sh legacy-susfs-v2
           else
             curl -LSs "https://raw.githubusercontent.com/skye-tachyon/KernelSU/master/kernel/setup.sh" | bash -s master
