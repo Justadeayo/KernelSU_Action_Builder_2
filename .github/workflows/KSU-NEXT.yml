@@ -1,0 +1,286 @@
+name: VIOLET BUILD KSU-Next
+
+on:
+  workflow_dispatch:
+    inputs:
+    
+      clang_version:
+        description: Type the clang version of ur kernel
+        required: true
+        type: choice
+        options:
+          - clang-r563880c
+          - clang-r510928
+          - clang-stable
+          
+      kernel_source:
+        description: Kernel Source Repo URL
+        required: true
+        type: string
+        
+      kernel_branch:
+        description: Kernel Branch
+        required: true
+        type: string
+        
+      defconfig_name:
+        description: Defconfig Name
+        required: true
+        type: string
+        
+      device_codename:
+        description: Device Codename (e.g. marble, alioth, vayu)
+        required: true
+        type: string
+        default: "violet"
+        
+      ksu_type:
+        description: "KernelSU Version"
+        required: false
+        type: choice
+        options:
+          - None
+          - KernelSU-Next
+          - ReSukiSU-with-susfs
+
+      BUILD_COMMIT:
+         description: "Any new changes that applies as a build note/commit"
+         required: false
+         type: string
+          
+      telegram_chat_id:
+        description: "Telegram Chat ID (e.g. -1001234567890)"
+        required: true
+        type: string
+        
+      telegram_bot_token:
+        description: "Telegram Bot Token (e.g. 123456:ABC-DEF...)"
+        required: true
+        type: string
+
+jobs:
+  Kernel_CI:
+    env:
+      GH_TOKEN: ${{ github.token }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      actions: read
+      checks: read
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup SWAP
+        uses: pierotofy/set-swap-space@master
+        with:
+          swap-size-gb: 16
+
+      - name: Start Time
+        run: echo "BUILD_START=$(date +%s)" >> $GITHUB_ENV
+
+      - name: Install build dependencies
+        run: |
+          sudo apt update
+          sudo apt install -y bc bison flex libssl-dev libelf-dev libdw-dev build-essential lz4 git python3 curl dwarves cpio lld gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi zip
+
+      - name: Clone Kernel Source
+        run: |
+          git clone --depth=1 -b ${{ inputs.kernel_branch }} ${{ inputs.kernel_source }} kernel
+
+      - name: Prepare Metadata
+        run: |
+          # Metadata from Kernel Source
+          echo "KERNEL_VER=$(cd kernel && make kernelversion)" >> $GITHUB_ENV
+          
+          # Metadata from KernelSU Repo
+          git clone --depth=1 https://github.com/Justadeayo/KernelSU-Next.git KSU_REPO
+          cd KSU_REPO
+          echo "LAST_KSU_COMMIT=$(git log -1 --pretty=%s)" >> $GITHUB_ENV
+          echo "COMMIT_HASH=$(git rev-parse --short HEAD)" >> $GITHUB_ENV
+          echo "BUILD_COMMIT=${{ inputs.BUILD_COMMIT }}" >> $GITHUB_ENV
+          cd ..
+          
+          # Logic for SUSFS label
+          echo "SUSFS_LABEL=$([[ "${{ inputs.ksu_type }}" == *"susfs"* ]] && echo "Yes" || echo "No")" >> $GITHUB_ENV
+
+      - name: Send Build Start Message
+        run: |
+          # Use a clean single block for the message
+          TG_MSG="*========================*%0A"
+          TG_MSG+="*   J  U  S  T  U  S    *%0A"
+          TG_MSG+="*   K  E  R  N  E  L    *%0A"
+          TG_MSG+="*========================*%0A"
+          TG_MSG+="*Compiler*: \`${{ inputs.clang_version }}\`%0A"
+          TG_MSG+="*Linux Version*: \`${KERNEL_VER}\`%0A"
+          TG_MSG+="*Device*: \`${{ inputs.device_codename }}\`%0A"
+          TG_MSG+="*KernelSU*: \`${{ inputs.ksu_type }}\`%0A"
+          TG_MSG+="*SUSFS*: \`${SUSFS_LABEL}\`%0A"
+          TG_MSG+="*Build Date*: \`$(date +'%Y-%m-%d %H:%M')\`%0A"
+          TG_MSG+="*KSU Commit*: \`${LAST_KSU_COMMIT}\`%0A"
+          TG_MSG+="*KSU Hash*: \`${COMMIT_HASH}\`%0A"
+          TG_MSG+="*Build Notes*: \`${BUILD_COMMIT}\`"
+
+          curl -sX POST "https://api.telegram.org/bot${{ inputs.telegram_bot_token }}/sendMessage" \
+            -d "chat_id=${{ inputs.telegram_chat_id }}" \
+            -d "parse_mode=Markdown" \
+            -d "disable_web_page_preview=true" \
+            -d "text=${TG_MSG}"
+
+      - name: Download AOSP Clang
+        run: |
+          mkdir -p toolchains/${{ inputs.clang_version }}
+          cd toolchains
+          OLD_TAGS=("clang-r510928")
+          if [[ " ${OLD_TAGS[@]} " =~ " ${{ inputs.clang_version }} " ]]; then
+            curl -LO https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/tags/android-14.0.0_r33/${{ inputs.clang_version }}.tar.gz
+          else
+            curl -LO https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/android16-qpr2-release/${{ inputs.clang_version }}.tar.gz
+          fi
+          tar -xf "${{ inputs.clang_version }}.tar.gz" -C ${{ inputs.clang_version }}
+
+      - name: Compile Kernel
+        run: |
+          CLANG_ROOT="${GITHUB_WORKSPACE}/toolchains/${{ inputs.clang_version }}/bin"
+          export PATH="${CLANG_ROOT}:$PATH"
+          export ARCH=arm64
+          export SUBARCH=arm64
+          export LLVM=1
+          export LLVM_IAS=1
+          export CC="${CLANG_ROOT}/clang"
+          export CXX="${CLANG_ROOT}/clang++"
+          export HOSTCC="${CLANG_ROOT}/clang"
+          export HOSTCXX="${CLANG_ROOT}/clang++"
+          export LD="${CLANG_ROOT}/ld.lld"
+          export AR="${CLANG_ROOT}/llvm-ar"
+          export NM="${CLANG_ROOT}/llvm-nm"
+          export OBJCOPY="${CLANG_ROOT}/llvm-objcopy"
+          export OBJDUMP="${CLANG_ROOT}/llvm-objdump"
+          export STRIP="${CLANG_ROOT}/llvm-strip"
+          export CROSS_COMPILE=aarch64-linux-gnu-
+          export CROSS_COMPILE_ARM32=arm-linux-gnueabi-
+          
+          cd kernel
+          case "${{ inputs.ksu_type }}" in
+            "KernelSU-Next")
+              curl -LSs "https://raw.githubusercontent.com/Justadeayo/Kernelsu-Next/legacy/kernel/setup.sh" | bash -
+              ;;
+            "ReSukiSU-with-susfs")
+              curl -LSs "https://raw.githubusercontent.com/ReSukiSU/ReSukiSU/main/kernel/setup.sh" | bash -
+              ;;
+          esac
+          
+          touch ./.scmversion
+          
+          DEFCONFIG="arch/arm64/configs/${{ inputs.defconfig_name }}"
+          
+          if [[ "${{ inputs.ksu_type }}" != "None" ]]; then
+            echo "CONFIG_KSU=y" >> "$DEFCONFIG"
+            echo "CONFIG_KPROBES=y" >> "$DEFCONFIG"
+            echo "CONFIG_KPROBE_EVENTS=y" >> "$DEFCONFIG"
+            echo "CONFIG_KSU_KPROBE_HOOKS=y" >> "$DEFCONFIG"
+            echo "CONFIG_OVERLAY_FS=y" >> "$DEFCONFIG"
+          fi
+          
+          if [[ "${{ inputs.ksu_type }}" == *"susfs"* ]]; then
+            curl -Lo susfs.patch https://raw.githubusercontent.com/JackA1ltman/NonGKI_Kernel_Build_2nd/mainline/Patches/Patch/susfs_patch_to_4.14.patch
+            curl -Lo inline.sh https://raw.githubusercontent.com/JackA1ltman/NonGKI_Kernel_Build_2nd/mainline/Patches/susfs_inline_hook_patches.sh
+            
+            # Use safety-fuzzy patching block to avoid build-halts on target device trees
+            patch -p1 --merge --no-backup-if-mismatch < susfs.patch || true
+            bash inline.sh
+            
+            echo "CONFIG_KSU_SUSFS=y" >> "$DEFCONFIG"
+          fi
+          
+          make O=out ${{ inputs.defconfig_name }}
+          
+          if [[ "${{ inputs.ksu_type }}" == "KernelSU-Next" ]]; then
+            echo "CONFIG_KSU_TAMPER_SYSCALL_TABLE=y" >> out/.config
+          fi
+          
+          # Compile and pipes all error output safely to a log file
+          make -j$(nproc) O=out 2>&1 | tee ${GITHUB_WORKSPACE}/build.log
+
+      - name: Make AnyKernel3
+        run: |
+          ZIP_NAME="${{ inputs.device_codename }}_${{ inputs.ksu_type }}_$(date -u +"%Y%m%d_%H%M")"
+          BOOT_DIR="kernel/out/arch/arm64/boot"
+          git clone -b master https://github.com/Justadeayo/AnyKernel3.git
+          if [ -f $BOOT_DIR/Image.gz ]; then cp $BOOT_DIR/Image.gz AnyKernel3/Image.gz
+          elif [ -f $BOOT_DIR/Image.gz-dtb ]; then cp $BOOT_DIR/Image.gz-dtb AnyKernel3/Image.gz-dtb; fi
+          if [ -f $BOOT_DIR/dtb.img ]; then cp $BOOT_DIR/dtb.img AnyKernel3/dtb
+          elif [ -f $BOOT_DIR/dtb ]; then cp $BOOT_DIR/dtb AnyKernel3/dtb; fi
+          if [ -f $BOOT_DIR/dtbo.img ]; then cp $BOOT_DIR/dtbo.img AnyKernel3/dtbo.img; fi
+          cd AnyKernel3
+          sed -i "s/device.name1=.*/device.name1=${{ inputs.device_codename }}/" anykernel.sh
+          zip -r9 ../"${ZIP_NAME}.zip" * -x .git
+
+      - name: Create GitHub Release
+        run: |
+          REL_NAME="${{ inputs.device_codename }}_${{ inputs.ksu_type }}_$(date -u +"%Y%m%d_%H%M")"
+          ZIP_FILE=$(ls *.zip)
+          gh release create "$REL_NAME" --title "$REL_NAME" --notes "" "${ZIP_FILE}"
+
+      - name: Upload to Telegram
+        run: |
+          # Calculate duration
+          END_TIME=$(date +%s)
+          DURATION=$((END_TIME - BUILD_START))
+          MINS=$((DURATION / 60))
+          SECS=$((DURATION % 60))
+          
+          ZIP_FILE=$(ls *.zip)
+          
+          # Define the message with actual newlines
+          SUCCESS_MSG="*Build Successful!* ✅
+
+          *Device*: \`${{ inputs.device_codename }}\`
+          *KernelSU*: \`${{ inputs.ksu_type }}\`
+          *SUSFS*: ${SUSFS_LABEL}
+          *Duration*: \`${MINS}m ${SECS}s\`
+          *Date*: \`$(date -u +'%Y-%m-%d %H:%M UTC')\`"
+
+          # Send via curl
+          curl -sX POST -F document=@"${ZIP_FILE}" \
+            "https://api.telegram.org/bot${{ inputs.telegram_bot_token }}/sendDocument" \
+            -F "chat_id=${{ inputs.telegram_chat_id }}" \
+            -F "parse_mode=Markdown" \
+            -F "caption=${SUCCESS_MSG}"
+
+      - name: Send Build Failure Message & Logs
+        if: failure()
+        run: |
+          END_TIME=$(date +%s)
+          DURATION=$((END_TIME - BUILD_START))
+          MINS=$((DURATION / 60))
+          SECS=$((DURATION % 60))
+
+          # Create a clean error log zip if the build.log exists
+          if [ -f "${GITHUB_WORKSPACE}/build.log" ]; then
+            tail -n 35 "${GITHUB_WORKSPACE}/build.log" > "${GITHUB_WORKSPACE}/error_preview.txt"
+            zip -j "${GITHUB_WORKSPACE}/error_logs.zip" "${GITHUB_WORKSPACE}/build.log" "${GITHUB_WORKSPACE}/error_preview.txt"
+          fi
+
+          FAIL_MSG="*Build Failed!* ❌
+
+          *Device*: \`${{ inputs.device_codename }}\`
+          *KernelSU*: \`${{ inputs.ksu_type }}\`
+          *Duration*: \`${MINS}m ${SECS}s\`
+          *Run Link*: [View Actions Log](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})"
+
+          # Send log package if generated, otherwise send plain message
+          if [ -f "${GITHUB_WORKSPACE}/error_logs.zip" ]; then
+            curl -sX POST -F document=@"${GITHUB_WORKSPACE}/error_logs.zip" \
+              "https://api.telegram.org/bot${{ inputs.telegram_bot_token }}/sendDocument" \
+              -F "chat_id=${{ inputs.telegram_chat_id }}" \
+              -F "parse_mode=Markdown" \
+              -F "caption=${FAIL_MSG}"
+          else
+            curl -sX POST "https://api.telegram.org/bot${{ inputs.telegram_bot_token }}/sendMessage" \
+              -d "chat_id=${{ inputs.telegram_chat_id }}" \
+              -d "parse_mode=Markdown" \
+              -d "disable_web_page_preview=true" \
+              -d "text=${FAIL_MSG}"
+          fi
+          
