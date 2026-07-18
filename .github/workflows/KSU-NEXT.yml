@@ -197,10 +197,6 @@ jobs:
             echo "CONFIG_SUSFS_TRY_UMOUNT=y" >> "$DEFCONFIG"
           fi
           
-          if [[ "${{ inputs.ksu_type }}" == "KernelSU-Next" ]]; then
-            echo "CONFIG_KSU_TAMPER_SYSCALL_TABLE=y" >> "$DEFCONFIG"
-          fi
-          
           make O=out ${{ inputs.defconfig_name }}
           
           make -j$(nproc) O=out 2>&1 | tee ${GITHUB_WORKSPACE}/build.log
