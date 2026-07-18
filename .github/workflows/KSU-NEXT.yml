@@ -199,19 +199,30 @@ jobs:
             echo "CONFIG_KSU_TAMPER_SYSCALL_TABLE=y" >> out/.config
           fi
           
-          # Compile and pipes all error output safely to a log file
+          # Compile and ensure the workflow fails if 'make' fails
           make -j$(nproc) O=out 2>&1 | tee ${GITHUB_WORKSPACE}/build.log
-
+          if [ ${PIPESTATUS[0]} -ne 0 ]; then
+            echo "Kernel compilation failed!"
+            exit 1
+          fi
+         
       - name: Make AnyKernel3
         run: |
           ZIP_NAME="${{ inputs.device_codename }}_${{ inputs.ksu_type }}_$(date -u +"%Y%m%d_%H%M")"
           BOOT_DIR="kernel/out/arch/arm64/boot"
           git clone -b master https://github.com/Justadeayo/AnyKernel3.git
-          if [ -f $BOOT_DIR/Image.gz ]; then cp $BOOT_DIR/Image.gz AnyKernel3/Image.gz
-          elif [ -f $BOOT_DIR/Image.gz-dtb ]; then cp $BOOT_DIR/Image.gz-dtb AnyKernel3/Image.gz-dtb; fi
-          if [ -f $BOOT_DIR/dtb.img ]; then cp $BOOT_DIR/dtb.img AnyKernel3/dtb
-          elif [ -f $BOOT_DIR/dtb ]; then cp $BOOT_DIR/dtb AnyKernel3/dtb; fi
-          if [ -f $BOOT_DIR/dtbo.img ]; then cp $BOOT_DIR/dtbo.img AnyKernel3/dtbo.img; fi
+
+          # Check all possible image outputs
+          if [ -f $BOOT_DIR/Image.gz ]; then
+            cp $BOOT_DIR/Image.gz AnyKernel3/Image.gz
+          elif [ -f $BOOT_DIR/Image.gz-dtb ]; then
+            cp $BOOT_DIR/Image.gz-dtb AnyKernel3/Image.gz-dtb
+          elif [ -f $BOOT_DIR/Image ]; then
+            cp $BOOT_DIR/Image AnyKernel3/Image
+          else
+            echo "ERROR: No kernel image file found in $BOOT_DIR!"
+            exit 1
+          fi
           cd AnyKernel3
           sed -i "s/device.name1=.*/device.name1=${{ inputs.device_codename }}/" anykernel.sh
           zip -r9 ../"${ZIP_NAME}.zip" * -x .git
