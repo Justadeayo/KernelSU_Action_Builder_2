@@ -1,30 +1,23 @@
-name: VIOLET BUILD
+name: Personal Kernel Build
 
 on:
   workflow_dispatch:
     inputs:
-    
       clang_version:
         description: Type the clang version of ur kernel
         required: true
         type: choice
         options:
-          - clang-3289846
-          - clang-r450784e
-          - clang-r475365b
-          - clang-r487747c
-          - clang-r498229b
-          - clang-r510928
-          - clang-r547379
-          - clang-r563880
           - clang-r563880c
-          - clang-r574158
           - clang-stable
+          - clang-r574158
+          - clang-r450784e
           
       kernel_source:
         description: Kernel Source Repo URL
         required: true
         type: string
+        default: "https://github.com/Justadeayo/android_kernel_xiaomi_violet"
         
       kernel_branch:
         description: Kernel Branch
@@ -35,6 +28,7 @@ on:
         description: Defconfig Name
         required: true
         type: string
+        default: "vendor/violet-perf_defconfig"
         
       device_codename:
         description: Device Codename (e.g. marble, alioth, vayu)
@@ -48,8 +42,9 @@ on:
         type: choice
         options:
           - None
-          - KernelSU-by-xx
+          - KernelSU
           - ReSukiSU-with-susfs
+        default: KernelSU
 
       BUILD_COMMIT:
          description: "Any new changes that applies as a build note/commit"
@@ -94,14 +89,13 @@ jobs:
 
       - name: Clone Kernel Source
         run: |
+          rm -rf kernel
           git clone --depth=1 -b ${{ inputs.kernel_branch }} ${{ inputs.kernel_source }} kernel
 
       - name: Prepare Metadata
         run: |
-          # Metadata from Kernel Source
           echo "KERNEL_VER=$(cd kernel && make kernelversion)" >> $GITHUB_ENV
           
-          # Metadata from KernelSU Repo
           git clone --depth=1 https://github.com/Justadeayo/KernelSU.git KSU_REPO
           cd KSU_REPO
           echo "LAST_KSU_COMMIT=$(git log -1 --pretty=%s)" >> $GITHUB_ENV
@@ -109,12 +103,10 @@ jobs:
           echo "BUILD_COMMIT=${{ inputs.BUILD_COMMIT }}" >> $GITHUB_ENV
           cd ..
           
-          # Logic for SUSFS label
-          echo "SUSFS_LABEL=$([[ "${{ inputs.ksu_type }}" == *"susfs"* ]] && echo "Yes" || echo "No")" >> $GITHUB_ENV
+          echo "SUSFS_LABEL=$([[ "${{ inputs.ksu_type }}" == "ReSukiSU-with-susfs" ]] && echo "Yes" || echo "??")" >> $GITHUB_ENV
 
       - name: Send Build Start Message
         run: |
-          # Use a clean single block for the message
           TG_MSG="*========================*%0A"
           TG_MSG+="*   J  U  S  T  U  S    *%0A"
           TG_MSG+="*   K  E  R  N  E  L    *%0A"
@@ -124,7 +116,7 @@ jobs:
           TG_MSG+="*Device*: \`${{ inputs.device_codename }}\`%0A"
           TG_MSG+="*KernelSU*: \`${{ inputs.ksu_type }}\`%0A"
           TG_MSG+="*SUSFS*: \`${SUSFS_LABEL}\`%0A"
-          TG_MSG+="*Build Date*: \`$(date +'%Y-%m-%d %H:%M')\`%0A"
+          TG_MSG+="*Build Date*: \`$(date -u +'%Y-%m-%d %H:%M UTC')\`%0A"
           TG_MSG+="*KSU Commit*: \`${LAST_KSU_COMMIT}\`%0A"
           TG_MSG+="*KSU Hash*: \`${COMMIT_HASH}\`%0A"
           TG_MSG+="*Build Notes*: \`${BUILD_COMMIT}\`"
@@ -139,7 +131,7 @@ jobs:
         run: |
           mkdir -p toolchains/${{ inputs.clang_version }}
           cd toolchains
-          OLD_TAGS=("clang-r450784e" "clang-r475365b" "clang-r487747c" "clang-r498229b" "clang-r510928")
+          OLD_TAGS=("clang-r450784e")
           if [[ " ${OLD_TAGS[@]} " =~ " ${{ inputs.clang_version }} " ]]; then
             curl -LO https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/tags/android-14.0.0_r33/${{ inputs.clang_version }}.tar.gz
           else
@@ -170,86 +162,127 @@ jobs:
           
           cd kernel
           case "${{ inputs.ksu_type }}" in
-            "KernelSU-by-xx")
+            "KernelSU")
               curl -LSs "https://raw.githubusercontent.com/Justadeayo/KernelSU/refs/heads/master/kernel/setup.sh" | bash -s master
               ;;
             "ReSukiSU-with-susfs")
-              curl -LSs "https://raw.githubusercontent.com/ReSukiSU/ReSukiSU/main/kernel/setup.sh" | bash -s main
+              curl -LSs "https://raw.githubusercontent.com/skye-tachyon/KernelSU/master/kernel/setup.sh" | bash -s master
               ;;
           esac
           
-          touch ./.scmversion
-          
           DEFCONFIG="arch/arm64/configs/${{ inputs.defconfig_name }}"
           
-          if [[ "${{ inputs.ksu_type }}" != "None" ]]; then
+          if [[ "${{ inputs.ksu_type }}" == "ReSukiSU-with-susfs" ]]; then
             echo "CONFIG_KSU=y" >> "$DEFCONFIG"
-            echo "CONFIG_KPROBES=y" >> "$DEFCONFIG"
-            echo "CONFIG_KPROBE_EVENTS=y" >> "$DEFCONFIG"
-            echo "CONFIG_KSU_KPROBE_HOOKS=y" >> "$DEFCONFIG"
-            echo "CONFIG_OVERLAY_FS=y" >> "$DEFCONFIG"
-          fi
-          
-          if [[ "${{ inputs.ksu_type }}" == *"susfs"* ]]; then
-            curl -Lo susfs.patch https://raw.githubusercontent.com/JackA1ltman/NonGKI_Kernel_Build_2nd/refs/heads/mainline/Patches/Patch/susfs_patch_to_4.14.patch
-            curl -Lo inline.sh https://raw.githubusercontent.com/JackA1ltman/NonGKI_Kernel_Build_2nd/refs/heads/mainline/Patches/susfs_inline_hook_patches.sh
-            
-            # Use safety-fuzzy patching block to avoid build-halts on target device trees
-            patch -p1 --merge --no-backup-if-mismatch < susfs.patch || true
-            bash inline.sh
-            
             echo "CONFIG_KSU_SUSFS=y" >> "$DEFCONFIG"
+          elif [[ "${{ inputs.ksu_type }}" == "KernelSU" ]]; then
+            echo "CONFIG_KSU=y" >> "$DEFCONFIG"
+            echo "CONFIG_KSU_SUSFS=y" >> "$DEFCONFIG"
+            echo "CONFIG_KSU_TAMPER_SYSCALL_TABLE=y" >> "$DEFCONFIG"
           fi
           
+          echo "CONFIG_KPROBES=y" >> "$DEFCONFIG"
+          echo "CONFIG_HAVE_KPROBES=y" >> "$DEFCONFIG"
+          echo "CONFIG_KPROBE_EVENTS=y" >> "$DEFCONFIG"
+          echo "CONFIG_KSU_KPROBE_HOOKS=y" >> "$DEFCONFIG"
+          echo "CONFIG_OVERLAY_FS=y" >> "$DEFCONFIG"
+          
+          touch ./.scmversion
           make O=out ${{ inputs.defconfig_name }}
           
-          if [[ "${{ inputs.ksu_type }}" == "KernelSU-by-xx" ]]; then
-            echo "CONFIG_KSU_TAMPER_SYSCALL_TABLE=y" >> out/.config
-          fi
+          set +e
+          make -j$(nproc) O=out 2>&1 | tee "${GITHUB_WORKSPACE}/build.log"
+          BUILD_STATUS=${PIPESTATUS[0]}
+          set -e
           
-          # Compile and pipes all error output safely to a log file
-          make -j$(nproc) O=out 2>&1 | tee ${GITHUB_WORKSPACE}/build.log
+          if [ $BUILD_STATUS -ne 0 ]; then
+            echo "Kernel compilation failed!"
+            exit 1
+          fi
 
       - name: Make AnyKernel3
         run: |
+          SUSFS_LABEL="N/A"
+          if [[ "${{ inputs.ksu_type }}" == "ReSukiSU-with-susfs" ]]; then
+            SUSFS_LABEL="SUSFS"
+          fi
+          
           ZIP_NAME="${{ inputs.device_codename }}_${{ inputs.ksu_type }}_$(date -u +"%Y%m%d_%H%M")"
           BOOT_DIR="kernel/out/arch/arm64/boot"
+          
           git clone -b master https://github.com/Justadeayo/AnyKernel3.git
-          if [ -f $BOOT_DIR/Image.gz ]; then cp $BOOT_DIR/Image.gz AnyKernel3/Image.gz
-          elif [ -f $BOOT_DIR/Image.gz-dtb ]; then cp $BOOT_DIR/Image.gz-dtb AnyKernel3/Image.gz-dtb; fi
-          if [ -f $BOOT_DIR/dtb.img ]; then cp $BOOT_DIR/dtb.img AnyKernel3/dtb
-          elif [ -f $BOOT_DIR/dtb ]; then cp $BOOT_DIR/dtb AnyKernel3/dtb; fi
-          if [ -f $BOOT_DIR/dtbo.img ]; then cp $BOOT_DIR/dtbo.img AnyKernel3/dtbo.img; fi
+          
+          if [ -f $BOOT_DIR/Image.gz ]; then
+              echo "Found Image.gz, prioritizing and copying it."
+              cp $BOOT_DIR/Image.gz AnyKernel3/Image.gz
+          elif [ -f $BOOT_DIR/Image.gz-dtb ]; then
+              echo "Image.gz not found, falling back to Image.gz-dtb."
+              cp $BOOT_DIR/Image.gz-dtb AnyKernel3/Image.gz-dtb
+          fi
+          
+          if [ -f $BOOT_DIR/dtb.img ]; then
+              echo "Found dtb.img, copying as dtb."
+              cp $BOOT_DIR/dtb.img AnyKernel3/dtb
+          elif [ -f $BOOT_DIR/dtb ]; then
+              echo "Found dtb, copying to AnyKernel3."
+              cp $BOOT_DIR/dtb AnyKernel3/dtb
+          fi
+          
+          if [ -f $BOOT_DIR/dtbo.img ]; then
+              echo "dtbo.img found, adding to AnyKernel."
+              cp $BOOT_DIR/dtbo.img AnyKernel3/dtbo.img
+          fi
+          
           cd AnyKernel3
           sed -i "s/device.name1=.*/device.name1=${{ inputs.device_codename }}/" anykernel.sh
+          
+          CLANG_ROOT="${GITHUB_WORKSPACE}/toolchains/${{ inputs.clang_version }}/bin"
+          CLANG_VER=$("${CLANG_ROOT}/clang" --version | head -n1 | sed 's/(https.*//' | sed 's/ version//' | xargs)
+          BUILD_DATE=$(date -u +'%Y-%m-%d %H:%M UTC')
+          
+          if [[ "${{ inputs.ksu_type }}" != "None" ]]; then
+            sed -i "s|ksu_supported=false|ksu_supported=true|" anykernel.sh
+          fi
+          
+          sed -i "s|##CLANG_VERSION##|${CLANG_VER}|" anykernel.sh
+          sed -i "s|##BUILD_DATE##|${BUILD_DATE}|" anykernel.sh
+          
           zip -r9 ../"${ZIP_NAME}.zip" * -x .git
+          
+          echo "ZIP_NAME=${ZIP_NAME}" >> $GITHUB_ENV
+
+      - name: Upload Kernel ZIP Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: kernel-zip
+          path: "*.zip"
 
       - name: Create GitHub Release
         run: |
           REL_NAME="${{ inputs.device_codename }}_${{ inputs.ksu_type }}_$(date -u +"%Y%m%d_%H%M")"
           ZIP_FILE=$(ls *.zip)
-          gh release create "$REL_NAME" --title "$REL_NAME" --notes "" "${ZIP_FILE}"
+          gh release create "$REL_NAME" --title "$REL_NAME" --notes "Automated custom kernel build" "${ZIP_FILE}"
 
       - name: Upload to Telegram
         run: |
-          # Calculate duration
           END_TIME=$(date +%s)
           DURATION=$((END_TIME - BUILD_START))
           MINS=$((DURATION / 60))
           SECS=$((DURATION % 60))
           
           ZIP_FILE=$(ls *.zip)
+          FILE_SIZE=$(du -sh "$ZIP_FILE" | cut -f1)
           
-          # Define the message with actual newlines
           SUCCESS_MSG="*Build Successful!* ✅
 
           *Device*: \`${{ inputs.device_codename }}\`
           *KernelSU*: \`${{ inputs.ksu_type }}\`
-          *SUSFS*: ${SUSFS_LABEL}
+          *SUSFS*: \`${SUSFS_LABEL}\`
+          *File*: \`${ZIP_NAME}.zip\`
+          *Size*: \`${FILE_SIZE}\`
           *Duration*: \`${MINS}m ${SECS}s\`
           *Date*: \`$(date -u +'%Y-%m-%d %H:%M UTC')\`"
 
-          # Send via curl
           curl -sX POST -F document=@"${ZIP_FILE}" \
             "https://api.telegram.org/bot${{ inputs.telegram_bot_token }}/sendDocument" \
             -F "chat_id=${{ inputs.telegram_chat_id }}" \
@@ -264,7 +297,6 @@ jobs:
           MINS=$((DURATION / 60))
           SECS=$((DURATION % 60))
 
-          # Create a clean error log zip if the build.log exists
           if [ -f "${GITHUB_WORKSPACE}/build.log" ]; then
             tail -n 35 "${GITHUB_WORKSPACE}/build.log" > "${GITHUB_WORKSPACE}/error_preview.txt"
             zip -j "${GITHUB_WORKSPACE}/error_logs.zip" "${GITHUB_WORKSPACE}/build.log" "${GITHUB_WORKSPACE}/error_preview.txt"
@@ -277,7 +309,6 @@ jobs:
           *Duration*: \`${MINS}m ${SECS}s\`
           *Run Link*: [View Actions Log](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})"
 
-          # Send log package if generated, otherwise send plain message
           if [ -f "${GITHUB_WORKSPACE}/error_logs.zip" ]; then
             curl -sX POST -F document=@"${GITHUB_WORKSPACE}/error_logs.zip" \
               "https://api.telegram.org/bot${{ inputs.telegram_bot_token }}/sendDocument" \
@@ -291,4 +322,3 @@ jobs:
               -d "disable_web_page_preview=true" \
               -d "text=${FAIL_MSG}"
           fi
-          
